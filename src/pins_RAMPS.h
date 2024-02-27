@@ -235,23 +235,6 @@
   #define MOSFET_D_PIN                        -1
 #endif
 
-
-
-//
-// Průša i3 MK2 Multiplexer Support
-//
-#if HAS_PRUSA_MMU1
-  #ifndef E_MUX0_PIN
-    #define E_MUX0_PIN                   AUX2_06  // Z_CS_PIN
-  #endif
-  #ifndef E_MUX1_PIN
-    #define E_MUX1_PIN                   AUX2_08  // E0_CS_PIN
-  #endif
-  #ifndef E_MUX2_PIN
-    #define E_MUX2_PIN                   AUX2_07  // E1_CS_PIN
-  #endif
-#endif
-
 //
 // AUX1    5V  GND D2  D1
 //          2   4   6   8
@@ -329,6 +312,8 @@
   #define EXP2_04_PIN                    AUX3_06  // 53
   #define EXP2_06_PIN                    AUX3_04  // 51
   #define EXP2_07_PIN                    AUX3_02  // 49
+
+  #define KILL_BTN_PIN                   AUX4_07
 
   #define LCD_PINS_CS                EXP1_04_PIN  // 7 CS make sure for zonestar zm3e4!
   #define LCD_PINS_MOSI              EXP1_03_PIN  // 6 DATA make sure for zonestar zm3e4!
