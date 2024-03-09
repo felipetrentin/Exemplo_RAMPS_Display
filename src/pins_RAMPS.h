@@ -287,7 +287,9 @@
 
   #define EXP2_01_PIN                    AUX3_03  // 50 (MISO)
   #define EXP2_02_PIN                    AUX3_05  // 52
+  #define EXP2_03_PIN                    AUX4_12  // 31
   #define EXP2_04_PIN                    AUX3_06  // 53
+  #define EXP2_05_PIN                    AUX4_11  // 33
   #define EXP2_06_PIN                    AUX3_04  // 51
   #define EXP2_07_PIN                    AUX3_02  // 49
 
