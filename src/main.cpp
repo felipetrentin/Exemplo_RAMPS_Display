@@ -52,8 +52,7 @@ void setup()
   digitalWrite(MOSFET_C_PIN, LOW);
 
   pinMode(E0_ENABLE_PIN, OUTPUT);
-  pinMode(E0_DIR_PIN, OUTPUT);
-  pinMode(E0_STEP_PIN, OUTPUT);
+  digitalWrite(E0_ENABLE_PIN, LOW);
 
   digitalWrite(BEEPER_PIN, HIGH);
   delay(100);
@@ -64,21 +63,37 @@ void setup()
   TCCR4B = 0;
   TCNT4 = 0;
 
-  OCR4A = 15624;
+  OCR4A = 64;
 
   TCCR4B |= (1 << WGM12);
   TCCR4B |= (1 << CS12) | (1 << CS10);
   TIMSK4 |= (1 << OCIE4A);
-  sei();
 
-  digitalWrite(E0_ENABLE_PIN, LOW);
+  //timer 3 for steppers
+  // Clear registers
+  TCCR3A = 0;
+  TCCR3B = 0;
+  TCNT3 = 0;
+
+  // 1000000 Hz (16000000/((1+1)*8))
+  OCR3A = 1;
+  // CTC
+  TCCR3B |= (1 << WGM32);
+  // Prescaler 8
+  TCCR3B |= (1 << CS31);
+  // Output Compare Match A Interrupt Enable
+  TIMSK3 |= (1 << OCIE3A);
+  sei();
 }
 
-bool toggle = false;
+ISR(TIMER3_COMPA_vect)
+{
+  
+}
+
 ISR(TIMER4_COMPA_vect)
 {
-  digitalWrite(E0_STEP_PIN, toggle);
-  toggle = !toggle;
+  updateEncoder();
 }
 
 // big font u8g_font_10x20
@@ -88,6 +103,7 @@ void loop()
 
   digitalWrite(MOSFET_C_PIN, !digitalRead(BTN_ENC));
   digitalWrite(MOSFET_A_PIN, !digitalRead(KILL_BTN_PIN));
+  updateScreen();
 }
 
 void updateEncoder(){
@@ -117,8 +133,8 @@ void updateEncoder(){
 void updateScreen(){
   tela.firstPage();
   do{
-    tela.setFont(u8g_font_courR08);
-    tela.drawStr(0, 20, "Bandeirnhas");
+    tela.setFont(u8g_font_5x8r);
+    tela.drawStr(0, 20, "Bandeirinhas");
     tela.drawStr(0, 44, digitalRead(X_MAX_PIN) ? "off" : "on ");
     tela.drawStr(50, 44, digitalRead(X_MIN_PIN) ? "off" : "on ");
     tela.drawStr(50, 10, String(counter).c_str());
@@ -127,4 +143,46 @@ void updateScreen(){
       tela.drawCircle(100, 50, 5);
     }
   } while (tela.nextPage());
+}
+
+class StepperDriver{
+  //time unit is microseconds
+  uint8_t dirPin = 0;
+  uint8_t stepPin = 0;
+  uint8_t enPin = 0;
+  int freqTarget = 0;
+  int currFreq = 0;
+  int period = 0;
+  int accel = 200;
+  unsigned long currMicros = 0;
+  unsigned long lastMicros = 0;
+
+  StepperDriver(uint8_t _dirPin, uint8_t _stepPin, uint8_t _enPin){
+    this->dirPin = _dirPin;
+    this->stepPin = _stepPin;
+    this->enPin = _enPin;
+    pinMode(dirPin, OUTPUT);
+    pinMode(stepPin, OUTPUT);
+    pinMode(enPin, OUTPUT);
+  }
+
+  void update(){
+    lastMicros = micros();
+  }
+
+  void setSpeed(int _frequency){
+    this->freqTarget = _frequency;
+  }
+
+  void updateAccel(){
+    int diff = freqTarget - currFreq;
+    int incTime = (diff*1000000)/accel;
+    int incAmount = diff/incTime;
+    currFreq =+ incAmount;
+    this->period = 1000000/currFreq;
+  }
+};
+
+void updateSteppers(){
+
 }
