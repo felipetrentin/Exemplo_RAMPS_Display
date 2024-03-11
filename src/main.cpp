@@ -1,16 +1,23 @@
 #include <Arduino.h>
 #include "pins_RAMPS.h"
 #include <U8glib-HAL.h>
+#include <AccelStepper.h>
+
+AccelStepper puxador(AccelStepper::DRIVER, E0_STEP_PIN, E0_DIR_PIN);
 
 U8GLIB_ST7920_128X64_4X tela(LCD_PINS_SCK, LCD_PINS_MOSI, LCD_PINS_CS);
 
 void updateScreen();
 void updateEncoder();
+int puxarPapel();
 
 unsigned long lastTime = 0;
 unsigned long loopTime = 0;
 int counter = 0;
 byte encState = 0;
+
+bool constantVel = false;
+
 static int8_t lookup_table[] = {
   0,  //0000 //semMov
   -1,  //0001
@@ -52,7 +59,7 @@ void setup()
   digitalWrite(MOSFET_C_PIN, LOW);
 
   pinMode(E0_ENABLE_PIN, OUTPUT);
-  digitalWrite(E0_ENABLE_PIN, LOW);
+  digitalWrite(E0_ENABLE_PIN, HIGH);
 
   digitalWrite(BEEPER_PIN, HIGH);
   delay(100);
@@ -69,26 +76,36 @@ void setup()
   TCCR4B |= (1 << CS12) | (1 << CS10);
   TIMSK4 |= (1 << OCIE4A);
 
-  //timer 3 for steppers
   // Clear registers
   TCCR3A = 0;
   TCCR3B = 0;
   TCNT3 = 0;
 
-  // 1000000 Hz (16000000/((1+1)*8))
-  OCR3A = 1;
+  // 10000 Hz (16000000/((24+1)*64))
+  OCR3A = 24;
   // CTC
   TCCR3B |= (1 << WGM32);
-  // Prescaler 8
-  TCCR3B |= (1 << CS31);
+  // Prescaler 64
+  TCCR3B |= (1 << CS31) | (1 << CS30);
   // Output Compare Match A Interrupt Enable
   TIMSK3 |= (1 << OCIE3A);
+
   sei();
+
+  puxador.setMaxSpeed(10000);
+  puxador.setAcceleration(20000);
+  
 }
 
 ISR(TIMER3_COMPA_vect)
 {
-  
+  if(constantVel){
+    digitalWrite(E0_ENABLE_PIN, LOW);
+    puxador.runSpeed();
+  }else{
+    digitalWrite(E0_ENABLE_PIN, !puxador.run());
+  }
+  //counter++;
 }
 
 ISR(TIMER4_COMPA_vect)
@@ -101,8 +118,8 @@ void loop()
 {
   loopTime = millis();
 
-  digitalWrite(MOSFET_C_PIN, !digitalRead(BTN_ENC));
-  digitalWrite(MOSFET_A_PIN, !digitalRead(KILL_BTN_PIN));
+  //digitalWrite(MOSFET_C_PIN, !digitalRead(BTN_ENC)); //roda puxadora
+  //digitalWrite(MOSFET_A_PIN, !digitalRead(KILL_BTN_PIN)); //embreagem
   updateScreen();
 }
 
@@ -135,54 +152,58 @@ void updateScreen(){
   do{
     tela.setFont(u8g_font_5x8r);
     tela.drawStr(0, 20, "Bandeirinhas");
-    tela.drawStr(0, 44, digitalRead(X_MAX_PIN) ? "off" : "on ");
+    tela.drawStr(0, 44, digitalRead(X_MAX_PIN) ? "off" : "on "); //sensor de papel
     tela.drawStr(50, 44, digitalRead(X_MIN_PIN) ? "off" : "on ");
     tela.drawStr(50, 10, String(counter).c_str());
     if (!digitalRead(BTN_ENC))
     {
       tela.drawCircle(100, 50, 5);
+      unsigned long startTime = millis();
+      Serial.print("Cycle Return: ");
+      Serial.print(puxarPapel());
+      Serial.print(" execution time: ");
+      Serial.println(millis() - startTime);
     }
   } while (tela.nextPage());
 }
 
-class StepperDriver{
-  //time unit is microseconds
-  uint8_t dirPin = 0;
-  uint8_t stepPin = 0;
-  uint8_t enPin = 0;
-  int freqTarget = 0;
-  int currFreq = 0;
-  int period = 0;
-  int accel = 200;
-  unsigned long currMicros = 0;
-  unsigned long lastMicros = 0;
-
-  StepperDriver(uint8_t _dirPin, uint8_t _stepPin, uint8_t _enPin){
-    this->dirPin = _dirPin;
-    this->stepPin = _stepPin;
-    this->enPin = _enPin;
-    pinMode(dirPin, OUTPUT);
-    pinMode(stepPin, OUTPUT);
-    pinMode(enPin, OUTPUT);
+int puxarPapel(){
+  if(digitalRead(X_MAX_PIN)){
+    //se n tiver papel na entrada
+    return -1;
   }
-
-  void update(){
-    lastMicros = micros();
+  if(!digitalRead(X_MIN_PIN)){
+    //já tem papel na saída
+    return 1;
   }
-
-  void setSpeed(int _frequency){
-    this->freqTarget = _frequency;
+  puxador.moveTo(puxador.currentPosition());
+  // liga o puxador e gira um pouco
+  digitalWrite(MOSFET_C_PIN, HIGH);
+  digitalWrite(MOSFET_A_PIN, HIGH);
+  puxador.move(1000);
+  delay(250);
+  // desliga o puxador e separa o papel girando sem embreagem
+  digitalWrite(MOSFET_C_PIN, LOW);
+  digitalWrite(MOSFET_A_PIN, HIGH);
+  // alimenta até a saída
+  /*
+  //tirei a curva de aceleração
+  extruder.move(1500);
+  delay(300);
+  */
+  puxador.move(4000);
+  while(digitalRead(X_MIN_PIN)){
+    if(!digitalRead(KILL_BTN_PIN)){
+      return 2;
+    }
+    if(!puxador.isRunning()){
+      return -1;
+    }
   }
-
-  void updateAccel(){
-    int diff = freqTarget - currFreq;
-    int incTime = (diff*1000000)/accel;
-    int incAmount = diff/incTime;
-    currFreq =+ incAmount;
-    this->period = 1000000/currFreq;
-  }
-};
-
-void updateSteppers(){
-
+  //anda uma quantidade fixa até realmente sair
+  puxador.moveTo(puxador.currentPosition()+6000);
+  delay(2000);
+  digitalWrite(MOSFET_C_PIN, LOW);
+  digitalWrite(MOSFET_A_PIN, LOW);
+  return 0;
 }
