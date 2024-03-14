@@ -429,23 +429,23 @@ public:
     /// \param[in] speed The desired maximum speed in steps per second. Must
     /// be > 0. Caution: Speeds that exceed the maximum speed supported by the processor may
     /// Result in non-linear accelerations and decelerations.
-    void    setMaxSpeed(float speed);
+    void    setMaxSpeed(int speed);
 
     /// Returns the maximum speed configured for this stepper
     /// that was previously set by setMaxSpeed();
     /// \return The currently configured maximum speed
-    float   maxSpeed();
+    int   maxSpeed();
 
     /// Sets the acceleration/deceleration rate.
     /// \param[in] acceleration The desired acceleration in steps per second
     /// per second. Must be > 0.0. This is an expensive call since it requires a square 
     /// root to be calculated. Dont call more ofthen than needed
-    void    setAcceleration(float acceleration);
+    void    setAcceleration(int acceleration);
 
     /// Returns the acceleration/deceleration rate configured for this stepper
     /// that was previously set by setAcceleration();
     /// \return The currently configured acceleration/deceleration
-    float   acceleration();
+    int   acceleration();
     
     /// Sets the desired constant speed for use with runSpeed().
     /// \param[in] speed The desired constant speed in steps per
@@ -454,11 +454,11 @@ public:
     /// once per hour, approximately. Speed accuracy depends on the Arduino
     /// crystal. Jitter depends on how frequently you call the runSpeed() function.
     /// The speed will be limited by the current value of setMaxSpeed()
-    void    setSpeed(float speed);
+    void    setSpeed(int speed);
 
     /// The most recently set speed.
     /// \return the most recent speed in steps per second
-    float   speed();
+    int   speed();
 
     /// The distance from the current position to the target position.
     /// \return the distance from the current position to the target position
@@ -678,14 +678,14 @@ private:
 
     /// The current motos speed in steps per second
     /// Positive is clockwise
-    float          _speed;         // Steps per second
+    int          _speed;         // Steps per second
 
     /// The maximum permitted speed in steps per second. Must be > 0.
-    float          _maxSpeed;
+    int          _maxSpeed;
 
     /// The acceleration to use to accelerate or decelerate the motor in steps
     /// per second per second. Must be > 0
-    float          _acceleration;
+    int          _acceleration;
     float          _sqrt_twoa; // Precomputed sqrt(2*_acceleration)
 
     /// The last step time in microseconds
