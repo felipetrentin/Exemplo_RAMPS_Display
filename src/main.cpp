@@ -4,6 +4,7 @@
 #include <AccelStepper.h>
 
 AccelStepper puxador(AccelStepper::DRIVER, E0_STEP_PIN, E0_DIR_PIN);
+AccelStepper esteira(AccelStepper::DRIVER, X_STEP_PIN, X_DIR_PIN);
 
 U8GLIB_ST7920_128X64_4X tela(LCD_PINS_SCK, LCD_PINS_MOSI, LCD_PINS_CS);
 
@@ -60,6 +61,8 @@ void setup()
 
   pinMode(E0_ENABLE_PIN, OUTPUT);
   digitalWrite(E0_ENABLE_PIN, HIGH);
+  pinMode(X_ENABLE_PIN, OUTPUT);
+  digitalWrite(X_ENABLE_PIN, HIGH);
 
   digitalWrite(BEEPER_PIN, HIGH);
   delay(100);
@@ -82,7 +85,7 @@ void setup()
   TCNT3 = 0;
 
   // 10000 Hz (16000000/((24+1)*64))
-  OCR3A = 24;
+  OCR3A = 12;
   // CTC
   TCCR3B |= (1 << WGM32);
   // Prescaler 64
@@ -94,17 +97,18 @@ void setup()
 
   puxador.setMaxSpeed(10000);
   puxador.setAcceleration(20000);
+
+  esteira.setMaxSpeed(10000);
+  esteira.setAcceleration(20000);
   
 }
 
 ISR(TIMER3_COMPA_vect)
 {
-  if(constantVel){
-    digitalWrite(E0_ENABLE_PIN, LOW);
-    puxador.runSpeed();
-  }else{
-    digitalWrite(E0_ENABLE_PIN, !puxador.run());
-  }
+  digitalWrite(E0_ENABLE_PIN, !puxador.run());
+  esteira.runSpeed();
+  digitalWrite(X_ENABLE_PIN, esteira.speed()==0);
+  
   //counter++;
 }
 
@@ -160,9 +164,17 @@ void updateScreen(){
       tela.drawCircle(100, 50, 5);
       unsigned long startTime = millis();
       Serial.print("Cycle Return: ");
+      esteira.setSpeed(3500);
       Serial.print(puxarPapel());
+      esteira.setSpeed(0);
       Serial.print(" execution time: ");
       Serial.println(millis() - startTime);
+    }
+
+    if(!digitalRead(KILL_BTN_PIN)){
+      esteira.setSpeed(4000);
+    }else{
+      esteira.setSpeed(0);
     }
   } while (tela.nextPage());
 }
@@ -194,14 +206,18 @@ int puxarPapel(){
   puxador.move(4000);
   while(digitalRead(X_MIN_PIN)){
     if(!digitalRead(KILL_BTN_PIN)){
+      digitalWrite(MOSFET_C_PIN, LOW);
+      digitalWrite(MOSFET_A_PIN, LOW);
       return 2;
     }
     if(!puxador.isRunning()){
+      digitalWrite(MOSFET_C_PIN, LOW);
+      digitalWrite(MOSFET_A_PIN, LOW);
       return -1;
     }
   }
   //anda uma quantidade fixa até realmente sair
-  puxador.moveTo(puxador.currentPosition()+6000);
+  puxador.moveTo(puxador.currentPosition() + 7000);
   delay(2000);
   digitalWrite(MOSFET_C_PIN, LOW);
   digitalWrite(MOSFET_A_PIN, LOW);
