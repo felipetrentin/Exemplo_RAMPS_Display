@@ -1,11 +1,9 @@
 #include <Arduino.h>
 #include "pins_RAMPS.h"
 #include <U8glib-HAL.h>
-#include <AccelStepper.h>
 
-AccelStepper bomba(AccelStepper::DRIVER, E0_STEP_PIN, E0_DIR_PIN);
-AccelStepper puxador(AccelStepper::DRIVER, Y_STEP_PIN, Y_DIR_PIN);
-AccelStepper esteira(AccelStepper::DRIVER, X_STEP_PIN, X_DIR_PIN);
+#include "newStepper.h"
+#include "physical.h"
 
 U8GLIB_ST7920_128X64_4X tela(LCD_PINS_SCK, LCD_PINS_MOSI, LCD_PINS_CS);
 
@@ -28,6 +26,8 @@ int counter = 0;
 byte encState = 0;
 
 bool constantVel = false;
+
+long larguraBandeirinha = 165;
 
 #define displayMargin 15
 
@@ -71,13 +71,6 @@ void setup()
   digitalWrite(MOSFET_A_PIN, LOW);
   digitalWrite(MOSFET_C_PIN, LOW);
 
-  pinMode(E0_ENABLE_PIN, OUTPUT);
-  digitalWrite(E0_ENABLE_PIN, HIGH);
-  pinMode(X_ENABLE_PIN, OUTPUT);
-  digitalWrite(X_ENABLE_PIN, HIGH);
-  pinMode(Y_ENABLE_PIN, OUTPUT);
-  digitalWrite(Y_ENABLE_PIN, HIGH);
-
   digitalWrite(BEEPER_PIN, HIGH);
   delay(100);
   digitalWrite(BEEPER_PIN, LOW);
@@ -92,39 +85,9 @@ void setup()
   TCCR4B |= (1 << WGM12);
   TCCR4B |= (1 << CS12) | (1 << CS10);
   TIMSK4 |= (1 << OCIE4A);
-
-  // Clear registers
-  TCCR3A = 0;
-  TCCR3B = 0;
-  TCNT3 = 0;
-
-  // 10000 Hz (16000000/((24+1)*64))
-  OCR3A = 12;
-  // CTC
-  TCCR3B |= (1 << WGM32);
-  // Prescaler 64
-  TCCR3B |= (1 << CS31) | (1 << CS30);
-  // Output Compare Match A Interrupt Enable
-  TIMSK3 |= (1 << OCIE3A);
-
   sei();
 
-  puxador.setMaxSpeed(10000);
-  puxador.setAcceleration(20000);
-
-  esteira.setMaxSpeed(10000);
-  esteira.setAcceleration(20000);
-
-  bomba.setMaxSpeed(15000);
-  bomba.setAcceleration(20000);
-}
-
-ISR(TIMER3_COMPA_vect)
-{
-  puxador.run();
-  //bomba.run();
-  esteira.runSpeed();
-  // counter++;
+  setupSteppers();
 }
 
 ISR(TIMER4_COMPA_vect)
@@ -136,9 +99,6 @@ ISR(TIMER4_COMPA_vect)
 void loop()
 {
   loopTime = millis();
-  digitalWrite(Y_ENABLE_PIN, !puxador.isRunning());
-  digitalWrite(E0_ENABLE_PIN, !bomba.isRunning());
-  digitalWrite(X_ENABLE_PIN, esteira.speed() == 0);
   updateScreen();
 }
 
@@ -280,32 +240,34 @@ void updateScreen()
         tela.drawStr(displayMargin, 30, "Limpar bomba");
         tela.drawStr(displayMargin, 40, "Puxar cola");
         tela.drawStr(displayMargin, 50, "Seq. de puxar papel");
-        tela.drawStr(displayMargin, 60, esteira.speed() > 0 ? "Desligar esteira" : "Ligar esteira");
+        //tela.drawStr(displayMargin, 60, esteira.speed() > 0 ? "Desligar esteira" : "Ligar esteira");
         tela.drawStr(0, 30 + index * 10, "=>");
         if (advanceState && !lastAdvanceState){
           switch (index){
           case 0:
-            bomba.move(2000);
+            prepareMovement(3, 10000);
+            runSteppers();
             break;
           case 1:
-            bomba.move(-2000);
+            prepareMovement(3, -10000);
+            runSteppers();
             break;
           case 2:
             // codigo para iniciar/parar
-            esteira.setSpeed(5000);
-            digitalWrite(X_ENABLE_PIN, LOW);
-            digitalWrite(Y_ENABLE_PIN, LOW);
+            //esteira.setSpeed(5000);
+
             puxarPapel();
-            digitalWrite(X_ENABLE_PIN, HIGH);
-            digitalWrite(Y_ENABLE_PIN, HIGH);
-            esteira.setSpeed(0);
+
+            //esteira.setSpeed(0);
             break;
           case 3:
+            /*
             if(esteira.speed() == 0){
               esteira.setSpeed(5000);
             }else{
               esteira.setSpeed(0);
             }
+            */
             break;
           }
         }
@@ -355,36 +317,48 @@ int puxarPapel()
     // já tem papel na saída
     return 1;
   }
-  puxador.setCurrentPosition(0);
+  //liga motor do puxador
+  digitalWrite(Y_ENABLE_PIN, LOW);
   // liga o puxador e gira um pouco
   digitalWrite(MOSFET_C_PIN, HIGH);
   digitalWrite(MOSFET_A_PIN, HIGH);
-  puxador.move(1000);
+  // 1000 steps
+  prepareMovement(1, 1000);
+  runSteppers();
   delay(250);
   // desliga o puxador e separa o papel girando sem embreagem
   digitalWrite(MOSFET_C_PIN, LOW);
   digitalWrite(MOSFET_A_PIN, HIGH);
 
-  puxador.move(4000);
+  // 4000 step
+  prepareMovement(1, 4000);
+  runSteppers();
   while (digitalRead(X_MIN_PIN))
   {
     if (!digitalRead(KILL_BTN_PIN))
     {
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
       return 2;
     }
-    if (!puxador.isRunning())
+    if (!isRunning(1))
     {
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
       return -1;
     }
   }
   // anda uma quantidade fixa até realmente sair
-  puxador.moveTo(puxador.currentPosition() + 7000);
-  delay(2000);
+  // 7000 steps
+  digitalWrite(X_ENABLE_PIN, LOW);
+  prepareMovement(0, 5000);
+  prepareMovement(1, steps_mm_puxador * larguraBandeirinha);
+  runAndWait();
   digitalWrite(MOSFET_C_PIN, LOW);
   digitalWrite(MOSFET_A_PIN, LOW);
+  digitalWrite(Y_ENABLE_PIN, HIGH);
+  digitalWrite(X_ENABLE_PIN, HIGH);
   return 0;
 }
