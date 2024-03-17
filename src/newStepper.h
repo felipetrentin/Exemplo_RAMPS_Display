@@ -14,8 +14,8 @@
 #define E0_STEP_HIGH             PORTA |=  0b00010000;
 #define E0_STEP_LOW              PORTA &= ~0b00010000;
 
-#define TIMER1_INTERRUPTS_ON    TIMSK1 |=  (1 << OCIE1A);
-#define TIMER1_INTERRUPTS_OFF   TIMSK1 &= ~(1 << OCIE1A);
+#define TIMER3_INTERRUPTS_ON    TIMSK3 |=  (1 << OCIE3A);
+#define TIMER3_INTERRUPTS_OFF   TIMSK3 &= ~(1 << OCIE3A);
 
 void setupSteppers();
 void prepareMovement(int whichMotor, long steps);

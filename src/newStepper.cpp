@@ -102,24 +102,24 @@ void setupSteppers() {
   digitalWrite(E0_ENABLE_PIN, HIGH);
 
   noInterrupts();
-  TCCR1A = 0;
-  TCCR1B = 0;
-  TCNT1  = 0;
+  TCCR3A = 0;
+  TCCR3B = 0;
+  TCNT3  = 0;
 
-  OCR1A = 1000;                             // compare value
-  TCCR1B |= (1 << WGM12);                   // CTC mode
-  TCCR1B |= ((1 << CS11) | (1 << CS10));    // 64 prescaler
+  OCR3A = 1000;                             // compare value
+  TCCR3B |= (1 << WGM12);                   // CTC mode
+  TCCR3B |= ((1 << CS11) | (1 << CS10));    // 64 prescaler
   interrupts();
 
   steppers[0].dirFunc = xDir;
   steppers[0].stepFunc = xStep;
-  steppers[0].acceleration = 1000;
-  steppers[0].minStepInterval = 50;
+  steppers[0].acceleration = 500;
+  steppers[0].minStepInterval = 150;
 
   steppers[1].dirFunc = yDir;
   steppers[1].stepFunc = yStep;
-  steppers[1].acceleration = 600;
-  steppers[1].minStepInterval = 10;
+  steppers[1].acceleration = 500;
+  steppers[1].minStepInterval = 50;
 
   steppers[2].dirFunc = zDir;
   steppers[2].stepFunc = zStep;
@@ -191,6 +191,8 @@ volatile byte nextStepperFlag = 0;
 
 void setNextInterruptInterval() {
 
+  bool movementComplete = true;
+
   unsigned long mind = 999999;
   for (int i = 0; i < NUM_STEPPERS; i++) {
     if ( ((1 << i) & remainingSteppersFlag) && steppers[i].di < mind ) {
@@ -201,23 +203,24 @@ void setNextInterruptInterval() {
   nextStepperFlag = 0;
   for (int i = 0; i < NUM_STEPPERS; i++) {
     if ( ! steppers[i].movementDone )
+      movementComplete = false;
     if ( ((1 << i) & remainingSteppersFlag) && steppers[i].di == mind )
       nextStepperFlag |= (1 << i);
   }
 
   if ( remainingSteppersFlag == 0 ) {
-    TIMER1_INTERRUPTS_OFF
-    OCR1A = 65500;
+    TIMER3_INTERRUPTS_OFF
+    OCR3A = 65500;
   }
 
-  OCR1A = mind;
+  OCR3A = mind;
 }
 
-ISR(TIMER1_COMPA_vect)
+ISR(TIMER3_COMPA_vect)
 {
-  unsigned int tmpCtr = OCR1A;
+  unsigned int tmpCtr = OCR3A;
 
-  OCR1A = 65500;
+  OCR3A = 65500;
 
   for (int i = 0; i < NUM_STEPPERS; i++) {
 
@@ -263,7 +266,7 @@ ISR(TIMER1_COMPA_vect)
 
   setNextInterruptInterval();
 
-  TCNT1  = 0;
+  TCNT3  = 0;
 }
 
 void adjustSpeedScales() {
@@ -288,7 +291,7 @@ void adjustSpeedScales() {
 void runAndWait() {
   adjustSpeedScales();
   setNextInterruptInterval();
-  TIMER1_INTERRUPTS_ON
+  TIMER3_INTERRUPTS_ON
   while ( remainingSteppersFlag );
   remainingSteppersFlag = 0;
   nextStepperFlag = 0;
@@ -297,7 +300,7 @@ void runAndWait() {
 void runSteppers() {
     adjustSpeedScales();
     setNextInterruptInterval();
-    TIMER1_INTERRUPTS_ON
+    TIMER3_INTERRUPTS_ON
 }
 
 bool isRunning(int i) {

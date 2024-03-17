@@ -247,10 +247,18 @@ void updateScreen()
           case 0:
             prepareMovement(3, 10000);
             runSteppers();
+            while(isRunning(3)){
+              digitalWrite(E0_ENABLE_PIN, LOW);
+            }
+            digitalWrite(E0_ENABLE_PIN, HIGH);
             break;
           case 1:
             prepareMovement(3, -10000);
             runSteppers();
+            while(isRunning(3)){
+              digitalWrite(E0_ENABLE_PIN, LOW);
+            }
+            digitalWrite(E0_ENABLE_PIN, HIGH);
             break;
           case 2:
             // codigo para iniciar/parar
@@ -352,9 +360,9 @@ int puxarPapel()
   }
   // anda uma quantidade fixa até realmente sair
   // 7000 steps
-  digitalWrite(X_ENABLE_PIN, LOW);
-  prepareMovement(0, 5000);
+  prepareMovement(0, steps_mm_puxador * larguraBandeirinha * 2);
   prepareMovement(1, steps_mm_puxador * larguraBandeirinha);
+  digitalWrite(X_ENABLE_PIN, LOW);
   runAndWait();
   digitalWrite(MOSFET_C_PIN, LOW);
   digitalWrite(MOSFET_A_PIN, LOW);
