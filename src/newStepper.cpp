@@ -9,21 +9,18 @@ struct stepperInfo {
   void (*dirFunc)(int);
   void (*stepFunc)();
 
-  // derived parameters
-  unsigned int c0;                // step interval for first step, determines acceleration
+
   long stepPosition;              // current position of stepper (total of all movements taken so far)
 
   // per movement variables (only changed once per movement)
   volatile int dir;                        // current direction of movement, used to keep track of position
   volatile unsigned int totalSteps;        // number of steps requested for current movement
-  volatile bool movementDone = false;      // true if the current movement has been completed (used by main program to wait for completion)
-  volatile unsigned int rampUpStepCount;   // number of steps taken to reach either max speed, or half-way to the goal (will be zero until this number is known)
 
+  volatile unsigned short period; //inverse of frequency. how many times to run the timer to actually step. (period of 10 is 1/10 of the timer freq.)
+  volatile unsigned short count; //how many timers have been run. 
   // per iteration variables (potentially changed every interrupt)
-  volatile unsigned int n;                 // index in acceleration curve, used to calculate next interval
-  volatile float d;                        // current interval length
-  volatile unsigned long di;               // above variable truncated
-  volatile unsigned int stepCount;         // number of steps completed in current movement
+  volatile unsigned int stepCount;
+  
 };
 
 void xStep() {
@@ -61,17 +58,6 @@ void aDir(int dir) {
   digitalWrite(E0_DIR_PIN, dir);
 }
 
-void resetStepperInfo( stepperInfo& si ) {
-  si.n = 0;
-  si.d = 0;
-  si.di = 0;
-  si.stepCount = 0;
-  si.rampUpStepCount = 0;
-  si.totalSteps = 0;
-  si.stepPosition = 0;
-  si.movementDone = false;
-}
-
 #define NUM_STEPPERS 3
 
 volatile stepperInfo steppers[NUM_STEPPERS];
@@ -104,36 +90,45 @@ void setupSteppers() {
   TCCR3B = 0;
   TCNT3  = 0;
 
-  OCR3A = 1000;                             // compare value
+  OCR3A = 25;                             // compare value
   TCCR3B |= (1 << WGM12);                   // CTC mode
   TCCR3B |= ((1 << CS11) | (1 << CS10));    // 64 prescaler
+
+  TCCR4A = 0;
+  TCCR4B = 0;
+  TCNT4  = 0;
+
+  OCR4A = 25;                             // compare value
+  TCCR4B |= (1 << WGM12);                   // CTC mode
+  TCCR4B |= ((1 << CS11) | (1 << CS10));    // 64 prescaler
+
+  TCCR5A = 0;
+  TCCR5B = 0;
+  TCNT5  = 0;
+
+  OCR5A = 25;                             // compare value
+  TCCR5B |= (1 << WGM12);                   // CTC mode
+  TCCR5B |= ((1 << CS11) | (1 << CS10));    // 64 prescaler
+
   interrupts();
   TIMER3_INTERRUPTS_ON
+  TIMER4_INTERRUPTS_OFF
+  TIMER5_INTERRUPTS_OFF
 
   steppers[0].dirFunc = xDir;
   steppers[0].stepFunc = xStep;
   steppers[0].acceleration = 500;
-  steppers[0].minStepInterval = 80;
+  steppers[0].minStepInterval = 4;
 
   steppers[1].dirFunc = zDir;
   steppers[1].stepFunc = zStep;
   steppers[1].acceleration = 500;
-  steppers[1].minStepInterval = 50;
+  steppers[1].minStepInterval = 2;
 
   steppers[2].dirFunc = aDir;
   steppers[2].stepFunc = aStep;
   steppers[2].acceleration = 300;
-  steppers[2].minStepInterval = 100;
-}
-
-void resetStepper(volatile stepperInfo& si) {
-  si.c0 = si.acceleration;
-  si.d = si.c0;
-  si.di = si.d;
-  si.stepCount = 0;
-  si.n = 0;
-  si.rampUpStepCount = 0;
-  si.movementDone = false;
+  steppers[2].minStepInterval = 1;
 }
 
 volatile byte remainingSteppersFlag = 0;
@@ -144,103 +139,60 @@ void prepareMovement(int whichMotor, int steps) {
   si.dirFunc( steps < 0 ? HIGH : LOW );
   si.dir = steps > 0 ? 1 : -1;
   si.totalSteps = abs(steps);
-  resetStepper(si);
+
+  //reset stepper
+  si.stepCount = 0;
+  si.period = si.minStepInterval;
   remainingSteppersFlag |= (1 << whichMotor);
-}
-
-volatile byte nextStepperFlag = 0;
-
-volatile int ind = 0;
-volatile unsigned int intervals[100];
-
-void setNextInterruptInterval() {
-
-  bool movementComplete = true;
-
-  unsigned int mind = 999999;
-  for (int i = 0; i < NUM_STEPPERS; i++) {
-    if ( ((1 << i) & remainingSteppersFlag) && steppers[i].di < mind ) {
-      mind = steppers[i].di;
-    }
-  }
-
-  nextStepperFlag = 0;
-  for (int i = 0; i < NUM_STEPPERS; i++) {
-    if ( ! steppers[i].movementDone )
-      movementComplete = false;
-
-    if ( ((1 << i) & remainingSteppersFlag) && steppers[i].di == mind )
-      nextStepperFlag |= (1 << i);
-  }
-
-  if ( remainingSteppersFlag == 0 ) {
-    OCR3A = 65500;
-  }
-
-  OCR3A = mind;
 }
 
 ISR(TIMER3_COMPA_vect)
 {
-  unsigned int tmpCtr = OCR3A;
-
-  OCR3A = 65500;
-
   for (int i = 0; i < NUM_STEPPERS; i++) {
+    //for each stepper:
 
-    if ( ! ((1 << i) & remainingSteppersFlag) )
+    if (!((1 << i) & remainingSteppersFlag) )
+      // currently not running
       continue;
-
-    if ( ! (nextStepperFlag & (1 << i)) ) {
-      steppers[i].di -= tmpCtr;
-      continue;
-    }
 
     volatile stepperInfo& s = steppers[i];
 
-    if ( s.stepCount < s.totalSteps ) {
-      s.stepFunc();
-      s.stepCount++;
-      s.stepPosition += s.dir;
-      if ( s.stepCount >= s.totalSteps ) {
-        s.movementDone = true;
-        remainingSteppersFlag &= ~(1 << i);
+    s.count ++;
+    if(s.count >= s.period){
+      s.count = 0;
+      //actually step motor
+      if ( s.stepCount < s.totalSteps ) {
+        s.stepFunc();
+        s.stepCount++;
+        s.stepPosition += s.dir;
+        if ( s.stepCount >= s.totalSteps ) {
+          // done moving (reached steps)
+          // set this stepper as not remaining
+          remainingSteppersFlag &= ~(1 << i);
+        }
       }
     }
-
-    if ( s.rampUpStepCount == 0 ) {
-      s.n++;
-      s.d = s.d - (2 * s.d) / (4 * s.n + 1);
-      if ( s.d <= s.minStepInterval ) {
-        s.d = s.minStepInterval;
-        s.rampUpStepCount = s.stepCount;
-      }
-      if ( s.stepCount >= s.totalSteps / 2 ) {
-        s.rampUpStepCount = s.stepCount;
-      }
-    }
-    else if ( s.stepCount >= s.totalSteps - s.rampUpStepCount ) {
-      s.d = (s.d * (4 * s.n + 1)) / (4 * s.n + 1 - 2);
-      s.n--;
-    }
-
-    s.di = s.d; // integer
   }
-
-  setNextInterruptInterval();
-
-  TCNT3  = 0;
 }
 
+ISR(TIMER4_COMPA_vect){
+
+}
+
+ISR(TIMER5_COMPA_vect){
+
+}
+
+
 void runAndWait() {
-  setNextInterruptInterval();
+  //setNextInterruptInterval();
   while ( remainingSteppersFlag );
 }
 
 void runSteppers() {
-  setNextInterruptInterval();
+  //setNextInterruptInterval();
 }
 
 bool isRunning(int i) {
-    return remainingSteppersFlag & (1<<i);
+  return remainingSteppersFlag & (1<<i);
 }

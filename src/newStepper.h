@@ -17,6 +17,13 @@
 #define TIMER3_INTERRUPTS_ON    TIMSK3 |=  (1 << OCIE3A);
 #define TIMER3_INTERRUPTS_OFF   TIMSK3 &= ~(1 << OCIE3A);
 
+#define TIMER4_INTERRUPTS_ON    TIMSK4 |=  (1 << OCIE4A);
+#define TIMER4_INTERRUPTS_OFF   TIMSK4 &= ~(1 << OCIE4A);
+
+#define TIMER5_INTERRUPTS_ON    TIMSK5 |=  (1 << OCIE5A);
+#define TIMER5_INTERRUPTS_OFF   TIMSK5 &= ~(1 << OCIE5A);
+
+
 void setupSteppers();
 void prepareMovement(int whichMotor, int steps);
 void runAndWait();
