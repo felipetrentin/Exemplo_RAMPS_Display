@@ -111,24 +111,26 @@ void setupSteppers() {
   TCCR5B |= ((1 << CS11) | (1 << CS10));    // 64 prescaler
 
   interrupts();
-  TIMER3_INTERRUPTS_ON
+  TIMER3_INTERRUPTS_OFF
   TIMER4_INTERRUPTS_OFF
   TIMER5_INTERRUPTS_OFF
 
+  //esteira
   steppers[0].dirFunc = xDir;
   steppers[0].stepFunc = xStep;
   steppers[0].acceleration = 500;
-  steppers[0].minStepInterval = 4;
+  steppers[0].minStepInterval = 500;
 
+  //puxador
   steppers[1].dirFunc = zDir;
   steppers[1].stepFunc = zStep;
   steppers[1].acceleration = 500;
-  steppers[1].minStepInterval = 2;
+  steppers[1].minStepInterval = 70;
 
   steppers[2].dirFunc = aDir;
   steppers[2].stepFunc = aStep;
-  steppers[2].acceleration = 300;
-  steppers[2].minStepInterval = 1;
+  steppers[2].acceleration = 500;
+  steppers[2].minStepInterval = 200;
 }
 
 volatile byte remainingSteppersFlag = 0;
@@ -144,43 +146,68 @@ void prepareMovement(int whichMotor, int steps) {
   si.stepCount = 0;
   si.period = si.minStepInterval;
   remainingSteppersFlag |= (1 << whichMotor);
+
+  switch (whichMotor)
+  {
+  case 0:
+    TCNT3 = 0;
+    OCR3A = si.minStepInterval;  
+    break;
+  case 1:
+    TCNT4 = 0;
+    OCR4A = si.minStepInterval;  
+    break;
+  case 2:
+    TCNT5 = 0;
+    OCR5A = si.minStepInterval;  
+    break;
+  }
 }
 
 ISR(TIMER3_COMPA_vect)
 {
-  for (int i = 0; i < NUM_STEPPERS; i++) {
-    //for each stepper:
-
-    if (!((1 << i) & remainingSteppersFlag) )
-      // currently not running
-      continue;
-
-    volatile stepperInfo& s = steppers[i];
-
-    s.count ++;
-    if(s.count >= s.period){
-      s.count = 0;
-      //actually step motor
-      if ( s.stepCount < s.totalSteps ) {
-        s.stepFunc();
-        s.stepCount++;
-        s.stepPosition += s.dir;
-        if ( s.stepCount >= s.totalSteps ) {
-          // done moving (reached steps)
-          // set this stepper as not remaining
-          remainingSteppersFlag &= ~(1 << i);
-        }
-      }
+  volatile stepperInfo& s = steppers[0];
+  if ( s.stepCount < s.totalSteps ) {
+    s.stepFunc();
+    s.stepCount++;
+    s.stepPosition += s.dir;
+    if ( s.stepCount >= s.totalSteps ) {
+      // done moving (reached steps)
+      // set this stepper as not remaining
+      remainingSteppersFlag &= ~(1 << 0);
+      TIMER3_INTERRUPTS_OFF
     }
   }
 }
 
 ISR(TIMER4_COMPA_vect){
-
+  volatile stepperInfo& s = steppers[1];
+  if ( s.stepCount < s.totalSteps ) {
+    s.stepFunc();
+    s.stepCount++;
+    s.stepPosition += s.dir;
+    if ( s.stepCount >= s.totalSteps ) {
+      // done moving (reached steps)
+      // set this stepper as not remaining
+      remainingSteppersFlag &= ~(1 << 1);
+      TIMER4_INTERRUPTS_OFF
+    }
+  }
 }
 
 ISR(TIMER5_COMPA_vect){
-
+  volatile stepperInfo& s = steppers[2];
+  if ( s.stepCount < s.totalSteps ) {
+    s.stepFunc();
+    s.stepCount++;
+    s.stepPosition += s.dir;
+    if ( s.stepCount >= s.totalSteps ) {
+      // done moving (reached steps)
+      // set this stepper as not remaining
+      remainingSteppersFlag &= ~(1 << 2);
+      TIMER5_INTERRUPTS_OFF
+    }
+  }
 }
 
 
@@ -190,7 +217,9 @@ void runAndWait() {
 }
 
 void runSteppers() {
-  //setNextInterruptInterval();
+  TIMER3_INTERRUPTS_ON
+  TIMER4_INTERRUPTS_ON
+  TIMER5_INTERRUPTS_ON
 }
 
 bool isRunning(int i) {
