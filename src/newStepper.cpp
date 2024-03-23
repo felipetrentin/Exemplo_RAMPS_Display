@@ -5,7 +5,7 @@
 struct stepperInfo {
   // externally defined parameters
   float acceleration;
-  volatile unsigned long minStepInterval; // ie. max speed, smaller is faster
+  volatile unsigned int minStepInterval;   // ie. max speed, smaller is faster
   void (*dirFunc)(int);
   void (*stepFunc)();
 
@@ -18,10 +18,6 @@ struct stepperInfo {
   volatile unsigned int totalSteps;        // number of steps requested for current movement
   volatile bool movementDone = false;      // true if the current movement has been completed (used by main program to wait for completion)
   volatile unsigned int rampUpStepCount;   // number of steps taken to reach either max speed, or half-way to the goal (will be zero until this number is known)
-  volatile unsigned long estStepsToSpeed;  // estimated steps required to reach max speed
-  volatile unsigned long estTimeForMove;   // estimated time (interrupt ticks) required to complete movement
-  volatile unsigned long rampUpStepTime;
-  volatile float speedScale;               // used to slow down this motor to make coordinated movement with other motors
 
   // per iteration variables (potentially changed every interrupt)
   volatile unsigned int n;                 // index in acceleration curve, used to calculate next interval
@@ -36,8 +32,10 @@ void xStep() {
 }
 void xDir(int dir) {
   digitalWrite(X_DIR_PIN, dir);
+  digitalWrite(Y_DIR_PIN, dir);
 }
 
+/*
 void yStep() {
   Y_STEP_HIGH
   Y_STEP_LOW
@@ -45,6 +43,7 @@ void yStep() {
 void yDir(int dir) {
   digitalWrite(Y_DIR_PIN, dir);
 }
+*/
 
 void zStep() {
   Z_STEP_HIGH
@@ -68,13 +67,12 @@ void resetStepperInfo( stepperInfo& si ) {
   si.di = 0;
   si.stepCount = 0;
   si.rampUpStepCount = 0;
-  si.rampUpStepTime = 0;
   si.totalSteps = 0;
   si.stepPosition = 0;
   si.movementDone = false;
 }
 
-#define NUM_STEPPERS 4
+#define NUM_STEPPERS 3
 
 volatile stepperInfo steppers[NUM_STEPPERS];
 
@@ -110,26 +108,22 @@ void setupSteppers() {
   TCCR3B |= (1 << WGM12);                   // CTC mode
   TCCR3B |= ((1 << CS11) | (1 << CS10));    // 64 prescaler
   interrupts();
+  TIMER3_INTERRUPTS_ON
 
   steppers[0].dirFunc = xDir;
   steppers[0].stepFunc = xStep;
   steppers[0].acceleration = 500;
-  steppers[0].minStepInterval = 150;
+  steppers[0].minStepInterval = 80;
 
-  steppers[1].dirFunc = yDir;
-  steppers[1].stepFunc = yStep;
+  steppers[1].dirFunc = zDir;
+  steppers[1].stepFunc = zStep;
   steppers[1].acceleration = 500;
   steppers[1].minStepInterval = 50;
 
-  steppers[2].dirFunc = zDir;
-  steppers[2].stepFunc = zStep;
-  steppers[2].acceleration = 1000;
-  steppers[2].minStepInterval = 50;
-
-  steppers[3].dirFunc = aDir;
-  steppers[3].stepFunc = aStep;
-  steppers[3].acceleration = 300;
-  steppers[3].minStepInterval = 5;
+  steppers[2].dirFunc = aDir;
+  steppers[2].stepFunc = aStep;
+  steppers[2].acceleration = 300;
+  steppers[2].minStepInterval = 100;
 }
 
 void resetStepper(volatile stepperInfo& si) {
@@ -140,60 +134,30 @@ void resetStepper(volatile stepperInfo& si) {
   si.n = 0;
   si.rampUpStepCount = 0;
   si.movementDone = false;
-  si.speedScale = 1;
-
-  float a = si.minStepInterval / (float)si.c0;
-  a *= 0.676;
-
-  float m = ((a*a - 1) / (-2 * a));
-  float n = m * m;
-
-  si.estStepsToSpeed = n;
 }
 
 volatile byte remainingSteppersFlag = 0;
 
-float getDurationOfAcceleration(volatile stepperInfo& s, unsigned int numSteps) {
-  float d = s.c0;
-  float totalDuration = 0;
-  for (unsigned int n = 1; n < numSteps; n++) {
-    d = d - (2 * d) / (4 * n + 1);
-    totalDuration += d;
-  }
-  return totalDuration;
-}
 
-void prepareMovement(int whichMotor, long steps) {
+void prepareMovement(int whichMotor, int steps) {
   volatile stepperInfo& si = steppers[whichMotor];
   si.dirFunc( steps < 0 ? HIGH : LOW );
   si.dir = steps > 0 ? 1 : -1;
   si.totalSteps = abs(steps);
   resetStepper(si);
-  
   remainingSteppersFlag |= (1 << whichMotor);
-
-  unsigned long stepsAbs = abs(steps);
-
-  if ( (2 * si.estStepsToSpeed) < stepsAbs ) {
-    // there will be a period of time at full speed
-    unsigned long stepsAtFullSpeed = stepsAbs - 2 * si.estStepsToSpeed;
-    float accelDecelTime = getDurationOfAcceleration(si, si.estStepsToSpeed);
-    si.estTimeForMove = 2 * accelDecelTime + stepsAtFullSpeed * si.minStepInterval;
-  }
-  else {
-    // will not reach full speed before needing to slow down again
-    float accelDecelTime = getDurationOfAcceleration( si, stepsAbs / 2 );
-    si.estTimeForMove = 2 * accelDecelTime;
-  }
 }
 
 volatile byte nextStepperFlag = 0;
+
+volatile int ind = 0;
+volatile unsigned int intervals[100];
 
 void setNextInterruptInterval() {
 
   bool movementComplete = true;
 
-  unsigned long mind = 999999;
+  unsigned int mind = 999999;
   for (int i = 0; i < NUM_STEPPERS; i++) {
     if ( ((1 << i) & remainingSteppersFlag) && steppers[i].di < mind ) {
       mind = steppers[i].di;
@@ -204,12 +168,12 @@ void setNextInterruptInterval() {
   for (int i = 0; i < NUM_STEPPERS; i++) {
     if ( ! steppers[i].movementDone )
       movementComplete = false;
+
     if ( ((1 << i) & remainingSteppersFlag) && steppers[i].di == mind )
       nextStepperFlag |= (1 << i);
   }
 
   if ( remainingSteppersFlag == 0 ) {
-    TIMER3_INTERRUPTS_OFF
     OCR3A = 65500;
   }
 
@@ -254,14 +218,13 @@ ISR(TIMER3_COMPA_vect)
       if ( s.stepCount >= s.totalSteps / 2 ) {
         s.rampUpStepCount = s.stepCount;
       }
-      s.rampUpStepTime += s.d;
     }
     else if ( s.stepCount >= s.totalSteps - s.rampUpStepCount ) {
       s.d = (s.d * (4 * s.n + 1)) / (4 * s.n + 1 - 2);
       s.n--;
     }
 
-    s.di = s.d * s.speedScale; // integer
+    s.di = s.d; // integer
   }
 
   setNextInterruptInterval();
@@ -269,38 +232,13 @@ ISR(TIMER3_COMPA_vect)
   TCNT3  = 0;
 }
 
-void adjustSpeedScales() {
-  float maxTime = 0;
-  
-  for (int i = 0; i < NUM_STEPPERS; i++) {
-    if ( ! ((1 << i) & remainingSteppersFlag) )
-      continue;
-    if ( steppers[i].estTimeForMove > maxTime )
-      maxTime = steppers[i].estTimeForMove;
-  }
-
-  if ( maxTime != 0 ) {
-    for (int i = 0; i < NUM_STEPPERS; i++) {
-      if ( ! ( (1 << i) & remainingSteppersFlag) )
-        continue;
-      steppers[i].speedScale = maxTime / steppers[i].estTimeForMove;
-    }
-  }
-}
-
 void runAndWait() {
-  adjustSpeedScales();
   setNextInterruptInterval();
-  TIMER3_INTERRUPTS_ON
   while ( remainingSteppersFlag );
-  remainingSteppersFlag = 0;
-  nextStepperFlag = 0;
 }
 
 void runSteppers() {
-    adjustSpeedScales();
-    setNextInterruptInterval();
-    TIMER3_INTERRUPTS_ON
+  setNextInterruptInterval();
 }
 
 bool isRunning(int i) {

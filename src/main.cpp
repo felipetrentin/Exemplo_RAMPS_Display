@@ -22,12 +22,16 @@ int index;
 bool running = false;
 unsigned long lastTime = 0;
 unsigned long loopTime = 0;
+
+unsigned long startTime;
+unsigned long endTime;
+
 int counter = 0;
 byte encState = 0;
 
 bool constantVel = false;
 
-long larguraBandeirinha = 165;
+int larguraBandeirinha = 165;
 
 #define displayMargin 15
 
@@ -143,45 +147,14 @@ void updateScreen()
     backState = !digitalRead(KILL_BTN_PIN);
 
     tela.setFont(u8g_font_ncenR08r);
-    // tela.drawStr(0, 20, "Bandeirinhas");
-    // tela.drawStr(0, 44, digitalRead(X_MAX_PIN) ? "off" : "on "); // sensor de papel
-    // tela.drawStr(50, 44, digitalRead(X_MIN_PIN) ? "off" : "on ");
 
-    // botao Apertado é false
-    // botao solto é true
 
-    /*if (counter == HIGH)
-    {
-      limitador += 4;
-      if (limitador > 8)
-      {
-        limitador = 8;
-      }
-    }
-    else if (counter == LOW)
-    {
-      limitador -= 4;
-      if (limitador < 0)
-      {
-        limitador = 0;
-      }
-    }*/
     selecao = (counter / 4);
-    Serial.println(estadoAtual);
-    /*
-    if (advanceState)
-    {
-      contador = contador + 1;
-    }
-    if (!backState)
-    {
-      contador = contador - 1;
-      delay(1000);
-    }
-    */
 
     switch(estadoAtual){
       case menuStatus:
+        tela.drawStr(0, 20, "Tempo de execussao: ");
+        tela.drawStr(0, 30, String(endTime - startTime).c_str());
         if(running){
 
         }else{
@@ -190,6 +163,9 @@ void updateScreen()
           }
           if(digitalRead(X_MAX_PIN)){
             tela.drawStr(0, 50, "Sem papel!");
+          }
+          if(digitalRead(X_MIN_PIN) && !digitalRead(X_MAX_PIN)){
+            tela.drawStr(0, 10, "Maquina Pronta!");
           }
         }
         if (advanceState && !lastAdvanceState){
@@ -240,42 +216,39 @@ void updateScreen()
         tela.drawStr(displayMargin, 30, "Limpar bomba");
         tela.drawStr(displayMargin, 40, "Puxar cola");
         tela.drawStr(displayMargin, 50, "Seq. de puxar papel");
-        //tela.drawStr(displayMargin, 60, esteira.speed() > 0 ? "Desligar esteira" : "Ligar esteira");
+        tela.drawStr(displayMargin, 60, "mover esteira");
         tela.drawStr(0, 30 + index * 10, "=>");
         if (advanceState && !lastAdvanceState){
           switch (index){
           case 0:
-            prepareMovement(3, 10000);
+            prepareMovement(2, 10000);
             runSteppers();
-            while(isRunning(3)){
+            while(isRunning(2)){
               digitalWrite(E0_ENABLE_PIN, LOW);
             }
             digitalWrite(E0_ENABLE_PIN, HIGH);
             break;
           case 1:
-            prepareMovement(3, -10000);
+            prepareMovement(2, -10000);
             runSteppers();
-            while(isRunning(3)){
+            while(isRunning(2)){
               digitalWrite(E0_ENABLE_PIN, LOW);
             }
             digitalWrite(E0_ENABLE_PIN, HIGH);
             break;
           case 2:
-            // codigo para iniciar/parar
-            //esteira.setSpeed(5000);
-
+            startTime = millis();
             puxarPapel();
-
-            //esteira.setSpeed(0);
+            endTime = millis();
             break;
           case 3:
-            /*
-            if(esteira.speed() == 0){
-              esteira.setSpeed(5000);
-            }else{
-              esteira.setSpeed(0);
-            }
-            */
+            digitalWrite(X_ENABLE_PIN, LOW);
+            digitalWrite(Y_ENABLE_PIN, LOW);
+            prepareMovement(0, steps_mm_esteira * larguraBandeirinha);
+            runAndWait();
+            digitalWrite(X_ENABLE_PIN, HIGH);
+            digitalWrite(Y_ENABLE_PIN, HIGH);
+
             break;
           }
         }
@@ -287,27 +260,6 @@ void updateScreen()
       
     }
 
-    //tela.drawStr(110, 8, String(counter).c_str());
-
-    /*
-    if (!digitalRead(BTN_ENC))
-    {
-      tela.drawCircle(100, 50, 5);
-      unsigned long startTime = millis();
-      Serial.print("Cycle Return: ");
-      esteira.setSpeed(3500);
-      Serial.print(puxarPapel());
-      esteira.setSpeed(0);
-      Serial.print(" execution time: ");
-      Serial.println(millis() - startTime);
-    }
-
-    if(!digitalRead(KILL_BTN_PIN)){
-      esteira.setSpeed(4000);
-    }else{
-      esteira.setSpeed(0);
-    }
-    */
     lastAdvanceState = advanceState;
     lastBackState = backState;
   } while (tela.nextPage());
@@ -326,14 +278,14 @@ int puxarPapel()
     return 1;
   }
   //liga motor do puxador
-  digitalWrite(Y_ENABLE_PIN, LOW);
+  digitalWrite(Z_ENABLE_PIN, LOW);
   // liga o puxador e gira um pouco
   digitalWrite(MOSFET_C_PIN, HIGH);
   digitalWrite(MOSFET_A_PIN, HIGH);
   // 1000 steps
+  delay(50);
   prepareMovement(1, 1000);
-  runSteppers();
-  delay(250);
+  runAndWait();
   // desliga o puxador e separa o papel girando sem embreagem
   digitalWrite(MOSFET_C_PIN, LOW);
   digitalWrite(MOSFET_A_PIN, HIGH);
@@ -347,26 +299,41 @@ int puxarPapel()
     {
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
-      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
       return 2;
     }
     if (!isRunning(1))
     {
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
-      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
       return -1;
     }
   }
   // anda uma quantidade fixa até realmente sair
   // 7000 steps
-  prepareMovement(0, steps_mm_puxador * larguraBandeirinha * 2);
   prepareMovement(1, steps_mm_puxador * larguraBandeirinha);
+  runSteppers();
+  delay(300);
+  prepareMovement(0, steps_mm_esteira * larguraBandeirinha);
   digitalWrite(X_ENABLE_PIN, LOW);
+  digitalWrite(Y_ENABLE_PIN, LOW);
+  runSteppers();
+  delay(800);
+  digitalWrite(E0_ENABLE_PIN, LOW);
+  prepareMovement(2, -2000);
+  runSteppers();
+  while(isRunning(2)){
+
+  }
+  prepareMovement(2, 300);
   runAndWait();
   digitalWrite(MOSFET_C_PIN, LOW);
   digitalWrite(MOSFET_A_PIN, LOW);
+
+  digitalWrite(E0_ENABLE_PIN, HIGH);
   digitalWrite(Y_ENABLE_PIN, HIGH);
   digitalWrite(X_ENABLE_PIN, HIGH);
+  digitalWrite(Z_ENABLE_PIN, HIGH);
   return 0;
 }
