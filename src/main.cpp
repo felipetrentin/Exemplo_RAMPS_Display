@@ -1,11 +1,12 @@
 #include <Arduino.h>
-#include <EEPROM.h>
 #include <U8glib-HAL.h>
+#include "Servo.h"
 
 #include "pins_RAMPS.h"
 #include "newStepper.h"
 #include "physical.h"
 
+Servo cortador;
 
 #define screenRefreshMS 70
 
@@ -168,17 +169,23 @@ void setup()
   sei();
 
   setupSteppers();
-
-  //eeprom_read_block(&parameters, 0, sizeof(parameters));
-
+  cortador.attach(SERVO0_PIN);
+  cortador.write(openPos);
 }
 
+void cut(){
+  cortador.write(closedPos);
+  delay(1000);
+  cortador.write(openPos);
+}
+
+unsigned long initTime;
 
 // big font u8g_font_10x20
 void loop()
 {
   if(running){
-    startTime = millis();
+    initTime = millis();
     returnState = puxarPapel();
     if(!running){
       digitalWrite(X_ENABLE_PIN, HIGH);
@@ -186,6 +193,20 @@ void loop()
       digitalWrite(E0_ENABLE_PIN, HIGH);
     }
     if(returnState != -1){
+      if(returnState != 2){
+        digitalWrite(BEEPER_PIN, HIGH);
+        delay(10);
+        digitalWrite(BEEPER_PIN, LOW);
+        delay(50);
+        digitalWrite(BEEPER_PIN, HIGH);
+        delay(10);
+        digitalWrite(BEEPER_PIN, LOW);
+        delay(50);
+        digitalWrite(BEEPER_PIN, HIGH);
+        delay(10);
+        digitalWrite(BEEPER_PIN, LOW);
+        delay(50);
+      }
       estadoAtual = displayErro;
       errMsg = errorMsgs[returnState];
       digitalWrite(X_ENABLE_PIN, HIGH);
@@ -193,6 +214,7 @@ void loop()
       digitalWrite(E0_ENABLE_PIN, HIGH);
       running = false;
     }
+    startTime = initTime;
     endTime = millis();
   }
   tryScreenUpdate();
@@ -303,6 +325,7 @@ void updateScreen()
           case 2:
             // codigo para iniciar/parar
             running = !running;
+            estadoAtual = menuStatus;
             break;
           }
         }
@@ -484,6 +507,7 @@ void updateScreen()
             digitalWrite(E0_ENABLE_PIN, HIGH);
             break;
           case 2:
+            estadoAtual = menuStatus;
             startTime = millis();
             returnState = puxarPapel();
             if(returnState != -1){
@@ -574,7 +598,7 @@ int puxarPapel()
   setInterval(1, parameters.velPuxador);
   setInterval(2, parameters.velbomba);
 
-
+  Serial.println("inicio do ciclo");
   //liga motor do puxador
   digitalWrite(Z_ENABLE_PIN, LOW);
 
@@ -668,7 +692,7 @@ int puxarPapel()
     tryScreenUpdate();
   }
 
-  //Serial.println("ligada esteira");
+  Serial.println("ligada esteira");
   prepareMovement(0, (steps_mm_esteira * parameters.larguraBandeirinha));
   runSteppers();
 
@@ -700,7 +724,7 @@ int puxarPapel()
     }
     tryScreenUpdate();
   }
-  //Serial.println("retraindo bomba");
+  Serial.println("retraindo bomba");
   prepareMovement(2, 1000);
   setInterval(2, 20);
   runSteppers();
@@ -717,13 +741,12 @@ int puxarPapel()
     }
     tryScreenUpdate();
   }
-
   setInterval(0, parameters.velFeed);
   prepareMovement(0, steps_mm_esteira * parameters.distanciaEntre);
   runSteppers();
   digitalWrite(MOSFET_C_PIN, LOW);
   digitalWrite(MOSFET_A_PIN, LOW);
   digitalWrite(Z_ENABLE_PIN, HIGH);
-  //Serial.println("fim do ciclo");
+  Serial.println("fim do ciclo");
   return -1;
 }
