@@ -1,16 +1,67 @@
 #include <Arduino.h>
-#include "pins_RAMPS.h"
+#include <EEPROM.h>
 #include <U8glib-HAL.h>
 
+#include "pins_RAMPS.h"
 #include "newStepper.h"
 #include "physical.h"
+
+
+#define screenRefreshMS 70
+
+PROGMEM const uint8_t lockimg[] ={
+  B11100000,B00111111,
+  B11110000,B01111111,
+  B01110000,B01110000,
+  B00110000,B01100000,
+  B00110000,B01100000,
+  B00110000,B01100000,
+  B11111000,B11111111,
+  B11111000,B11111000,
+  B11111000,B11111000,
+  B11111000,B11111101,
+  B11111000,B11111101,
+  B11111000,B11111111,
+  B11110000,B01111111
+};
+
+struct params{
+  int larguraBandeirinha = 165;
+  int distanciaEntre = 300;
+  int velPuxador = 60;
+  int velEsteira = 90;
+  int velbomba = 150;
+  int velFeed = 50;
+  int uLbandeirinha = 30;
+  int distCorte = 100;
+} parameters;
 
 U8GLIB_ST7920_128X64_4X tela(LCD_PINS_SCK, LCD_PINS_MOSI, LCD_PINS_CS);
 
 void updateScreen();
 int puxarPapel();
+void tryScreenUpdate();
+
+int returnState;
 
 String errMsg = "_____";
+
+enum statesFirstMenu
+{
+  menuStatus,
+  menuPrincipal,
+  configurar,
+  configurarVelocidade,
+  configurarTamanho,
+  controlar,
+  displayErro,
+  editVal,
+  
+};
+
+String editValName;
+int* editValPtr;
+int lastEditVal;
 
 int estadoAtual = 0;
 int selecao = 0;
@@ -23,21 +74,13 @@ int index;
 
 unsigned int mmMade = 0;
 
-int cutSize = 10000;
-
 bool running = false;
-unsigned long lastTime = 0;
-unsigned long loopTime = 0;
 
 unsigned long startTime;
 unsigned long endTime;
 
-int counter = 0;
+long counter = 0;
 byte encState = 0;
-
-bool constantVel = false;
-
-int larguraBandeirinha = 165;
 
 #define displayMargin 15
 
@@ -59,7 +102,17 @@ static int8_t lookup_table[] = {
     -1, // 1110
     0   // 1111 //sem movivento
 };
-
+/**
+ * return -1 = falha
+ * return  1 = erro de recurso
+ * return  2 = interrupted
+ * return  0 = ok
+ */
+String errorMsgs[] = {
+  "Falha ao executar.",
+  "Sem recursos disponiveis",
+  "Interrompido pelo usuário"
+};
 void setup()
 {
   tela.begin();
@@ -81,10 +134,27 @@ void setup()
   digitalWrite(MOSFET_A_PIN, LOW);
   digitalWrite(MOSFET_C_PIN, LOW);
 
+  if(!(digitalRead(KILL_BTN_PIN) || digitalRead(BTN_ENC))){
+    eeprom_write_block(&parameters, 0, sizeof(parameters));
+    digitalWrite(BEEPER_PIN, HIGH);
+    delay(1000);
+    digitalWrite(BEEPER_PIN, LOW);
+    while(true){
+      tela.firstPage();
+      do{
+        tela.setFont(u8g_font_ncenR08r);
+        tela.drawStr(0, 10, "PADRAO RESTAURADO");
+        tela.drawLine(0, 14, 128, 14);
+        tela.drawStr(0, 30, "reinicie para continuar.");
+      } while (tela.nextPage());
+    }
+  }
+
+  // carrega os parametros
+  eeprom_read_block(&parameters, 0, sizeof(parameters));
   digitalWrite(BEEPER_PIN, HIGH);
   delay(100);
   digitalWrite(BEEPER_PIN, LOW);
-
   cli();
   TCCR2A = 0;
   TCCR2B = 0;
@@ -98,14 +168,44 @@ void setup()
   sei();
 
   setupSteppers();
+
+  //eeprom_read_block(&parameters, 0, sizeof(parameters));
+
 }
 
 
 // big font u8g_font_10x20
 void loop()
 {
-  loopTime = millis();
-  updateScreen();
+  if(running){
+    startTime = millis();
+    returnState = puxarPapel();
+    if(!running){
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+    }
+    if(returnState != -1){
+      estadoAtual = displayErro;
+      errMsg = errorMsgs[returnState];
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+      running = false;
+    }
+    endTime = millis();
+  }
+  tryScreenUpdate();
+}
+unsigned long updateTime;
+unsigned long lastUpdateTime;
+
+void tryScreenUpdate(){
+  updateTime = millis();
+  if(updateTime >= lastUpdateTime + screenRefreshMS){
+    lastUpdateTime = updateTime;
+    updateScreen();
+  }
 }
 
 ISR(TIMER2_COMPA_vect)
@@ -140,15 +240,6 @@ ISR(TIMER2_COMPA_vect)
   // agora o futuro virou passado, faz o bitshift.
   encState = (encState & 0b11) << 1;
 }
-
-enum statesFirstMenu
-{
-  menuStatus,
-  menuPrincipal,
-  configurar,
-  controlar,
-  displayErro
-};
 
 void updateScreen()
 {
@@ -220,28 +311,162 @@ void updateScreen()
           counter = 0;
         }
         break;
-      
       case configurar:
+        index = abs(selecao) % (running ? 2 : 3);
         tela.drawStr(0, 10, "Configurar Maquina");
-        tela.drawLine(0, 13, 128, 13);
+        tela.drawLine(0, 14, 128, 14);
+        tela.drawStr(displayMargin, 30, "Config. Distancias");
+        tela.drawStr(displayMargin, 40, "Config. Velocidades");
+        if(running){
+          tela.drawXBMP(110, 0, 16, 13, lockimg);
+        }else{
+          tela.drawStr(displayMargin, 50, "Salvar Configuracoes");
+        }
+        tela.drawStr(0, 30 + index * 10, "=>");
+        if(advanceState && !lastAdvanceState){
+          counter = 0;
+          switch (index)
+          {
+          case 0:
+            estadoAtual = configurarTamanho;
+            break;
+          case 1:
+            estadoAtual = configurarVelocidade;
+            break;
+          case 2:
+            digitalWrite(BEEPER_PIN, HIGH);
+            eeprom_write_block(&parameters, 0, sizeof(parameters));
+            delay(50);
+            digitalWrite(BEEPER_PIN, LOW);
+            break;
+          }
+        }
         if (backState && !lastBackState){
           estadoAtual = menuPrincipal;
           counter = 0;
         }
         break;
+      case configurarTamanho:
+        tela.drawStr(0, 10, "Configurar Distancias");
+        tela.drawLine(0, 14, 128, 14);
+
+        tela.drawStr(displayMargin - 5, 30, "largura: [mm]");
+        tela.drawStr(displayMargin + 80, 30, String(parameters.larguraBandeirinha).c_str());
+
+        tela.drawStr(displayMargin - 5, 40, "dist. entre: [mm]");
+        tela.drawStr(displayMargin + 80, 40, String(parameters.distanciaEntre).c_str());
+
+        tela.drawStr(displayMargin - 5, 50, "cola: [uL]");
+        tela.drawStr(displayMargin + 80, 50, String(parameters.uLbandeirinha).c_str());
+
+        tela.drawStr(displayMargin - 5, 60, "dist. corte [cm]:");
+        tela.drawStr(displayMargin + 80, 60, String(parameters.distCorte).c_str());
+
+        if(!running){
+          index = abs(selecao) % 4;
+          tela.drawStr(0, 30 + index * 10, ">");
+          if(advanceState && !lastAdvanceState){
+            //editar valores
+            switch (index)
+            {
+            case 0:
+              editValPtr = &parameters.larguraBandeirinha;
+              editValName = "largura da bandeirinha";
+              break;
+            case 1:
+              editValPtr = &parameters.distanciaEntre;
+              editValName = "dist. entre bandeiras";
+              break;
+            case 2:
+              editValPtr = &parameters.uLbandeirinha;
+              editValName = "quantidade de cola";
+              break;
+            case 3:
+              editValPtr = &parameters.distCorte;
+              editValName = "distancia do corte";
+              break;
+            }
+            lastEditVal = *editValPtr;
+            counter = *editValPtr * 4;
+            estadoAtual = editVal;
+          }
+        }else{
+          tela.drawXBMP(110, 0, 16, 13, lockimg);
+        }
+        if (backState && !lastBackState){
+          estadoAtual = configurar;
+          counter = 0;
+        }
+        break;
       
+      case configurarVelocidade:
+        tela.drawStr(0, 10, "Configurar Distancias");
+        tela.drawLine(0, 14, 128, 14);
+
+        tela.drawStr(displayMargin - 5, 30, "vel. cola:");
+        tela.drawStr(displayMargin + 80, 30, String(parameters.velbomba).c_str());
+
+        tela.drawStr(displayMargin - 5, 40, "vel. puxador");
+        tela.drawStr(displayMargin + 80, 40, String(parameters.velPuxador).c_str());
+
+        tela.drawStr(displayMargin - 5, 50, "vel. esteira");
+        tela.drawStr(displayMargin + 80, 50, String(parameters.velEsteira).c_str());
+
+        tela.drawStr(displayMargin - 5, 60, "vel. avanco");
+        tela.drawStr(displayMargin + 80, 60, String(parameters.velFeed).c_str());
+
+        if(!running){
+          index = abs(selecao) % 4;
+          tela.drawStr(0, 30 + index * 10, ">");
+          if(advanceState && !lastAdvanceState){
+            //editar valores
+            switch (index)
+            {
+            case 0:
+              editValPtr = &parameters.velbomba;
+              editValName = "velocidade cola";
+              break;
+            case 1:
+              editValPtr = &parameters.velPuxador;
+              editValName = "velocidade puxador";
+              break;
+            case 2:
+              editValPtr = &parameters.velEsteira;
+              editValName = "velocidade esteira";
+              break;
+            case 3:
+              editValPtr = &parameters.velFeed;
+              editValName = "velocidade avanco";
+              break;
+            }
+            lastEditVal = *editValPtr;
+            counter = *editValPtr * 4;
+            estadoAtual = editVal;
+          }
+        }else{
+          tela.drawXBMP(110, 0, 16, 13, lockimg);
+        }
+        if (backState && !lastBackState){
+          estadoAtual = configurar;
+          counter = 0;
+        }
+        break;
+
       case controlar:
-        index = abs(selecao) % 4;
+        index = abs(selecao) % (running ? 2 : 4);
         tela.drawStr(0, 10, "Controle Manual");
         tela.drawLine(0, 13, 128, 13);
         tela.drawStr(displayMargin, 30, "Limpar bomba");
         tela.drawStr(displayMargin, 40, "Puxar cola");
-        tela.drawStr(displayMargin, 50, "Seq. de puxar papel");
-        tela.drawStr(displayMargin, 60, "mover esteira");
+        if(!running){
+          tela.drawStr(displayMargin, 50, "Seq. de puxar papel");
+          tela.drawStr(displayMargin, 60, "mover esteira");
+        }
         tela.drawStr(0, 30 + index * 10, "=>");
         if (advanceState && !lastAdvanceState){
           switch (index){
           case 0:
+            setInterval(2, 50);
             prepareMovement(2, 10000);
             runSteppers();
             while(isRunning(2)){
@@ -250,6 +475,7 @@ void updateScreen()
             digitalWrite(E0_ENABLE_PIN, HIGH);
             break;
           case 1:
+            setInterval(2, 100);
             prepareMovement(2, -10000);
             runSteppers();
             while(isRunning(2)){
@@ -259,20 +485,24 @@ void updateScreen()
             break;
           case 2:
             startTime = millis();
-            if(puxarPapel() != 0){
+            returnState = puxarPapel();
+            if(returnState != -1){
               estadoAtual = displayErro;
-              errMsg = "ERRO!";
+              errMsg = errorMsgs[returnState];
             }
+            runAndWait();
+            digitalWrite(X_ENABLE_PIN, HIGH);
+            digitalWrite(Y_ENABLE_PIN, HIGH);
+            digitalWrite(E0_ENABLE_PIN, HIGH);
             endTime = millis();
             break;
           case 3:
             digitalWrite(X_ENABLE_PIN, LOW);
             digitalWrite(Y_ENABLE_PIN, LOW);
-            prepareMovement(0, steps_mm_esteira * larguraBandeirinha);
+            prepareMovement(0, 1000);
             runAndWait();
             digitalWrite(X_ENABLE_PIN, HIGH);
             digitalWrite(Y_ENABLE_PIN, HIGH);
-
             break;
           }
         }
@@ -286,8 +516,7 @@ void updateScreen()
         tela.drawStr(5, 10, "Parada de emergencia!");
         tela.drawLine(0, 13, 128, 13);
 
-        tela.setCursorPos(1, 25);
-        tela.print(errMsg.c_str());
+        tela.drawStr(3, 25, errMsg.c_str());
 
         tela.drawBox(50, 50, 30, 10);
         tela.setColorIndex(0);
@@ -297,6 +526,22 @@ void updateScreen()
           estadoAtual = menuStatus;
         }
         break;
+      
+      case editVal:
+        tela.drawStr(0, 10, editValName.c_str());
+        tela.drawLine(0, 13, 128, 13);
+        *editValPtr = counter/4;
+        tela.drawStr(0, 40, String(*editValPtr).c_str());
+        if((backState && !lastBackState)){
+          *editValPtr = lastEditVal;
+          estadoAtual = configurar;
+          counter = 0;
+        }
+        if((advanceState && !lastAdvanceState)){
+          estadoAtual = configurar;
+          counter = 0;
+        }
+        break;
     }
 
     lastAdvanceState = advanceState;
@@ -304,30 +549,58 @@ void updateScreen()
   } while (tela.nextPage());
 }
 
+
+/**
+ * return  0 = falha
+ * return  1 = erro de recurso
+ * return  2 = interrupted
+ * return  -1 = ok
+ */
 int puxarPapel()
 {
   if (digitalRead(X_MAX_PIN))
   {
     // se n tiver papel na entrada
-    return -1;
+    return 1;
   }
   if (!digitalRead(X_MIN_PIN))
   {
     // já tem papel na saída
-    return 1;
+    return 0;
   }
+  // ################## INICIO PUXAR PAPEL ##################
+  //normal operation
+  setInterval(0, parameters.velEsteira);
+  setInterval(1, parameters.velPuxador);
+  setInterval(2, parameters.velbomba);
+
 
   //liga motor do puxador
   digitalWrite(Z_ENABLE_PIN, LOW);
+
   // liga o puxador e gira um pouco
   digitalWrite(MOSFET_C_PIN, HIGH);
   digitalWrite(MOSFET_A_PIN, HIGH);
-  // 1000 steps
+
   delay(50);
   prepareMovement(1, 5000);
   runSteppers();
-  delay(400);
-  // desliga o puxador e separa o papel girando sem embreagem
+
+  while(getMovementStep(1) < 1000){
+    if(!digitalRead(KILL_BTN_PIN)){
+      digitalWrite(MOSFET_C_PIN, LOW);
+      digitalWrite(MOSFET_A_PIN, LOW);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      return 2;
+    }
+    tryScreenUpdate();
+  }
+
+  // desliga o puxador e separa o papel
   digitalWrite(MOSFET_C_PIN, LOW);
   digitalWrite(MOSFET_A_PIN, HIGH);
 
@@ -339,6 +612,10 @@ int puxarPapel()
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
       digitalWrite(Z_ENABLE_PIN, HIGH);
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
       return 2;
     }
     if (!isRunning(1))
@@ -346,33 +623,107 @@ int puxarPapel()
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
       digitalWrite(Z_ENABLE_PIN, HIGH);
-      return -1;
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      return 0;
     }
+    tryScreenUpdate();
   }
-  // anda uma quantidade fixa até realmente sair
-  // 7000 steps
-  prepareMovement(1, steps_mm_puxador * larguraBandeirinha);
-  runSteppers();
-  delay(300);
-  prepareMovement(0, steps_mm_esteira * larguraBandeirinha);
+  prepareMovement(1, 0);
+  // ################## FIM PUXAR PAPEL ##################
+
+  while(isRunning(0)){
+    if (!digitalRead(KILL_BTN_PIN))
+    {
+      digitalWrite(MOSFET_C_PIN, LOW);
+      digitalWrite(MOSFET_A_PIN, LOW);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      return 2;
+    }
+    tryScreenUpdate();
+  }
   digitalWrite(X_ENABLE_PIN, LOW);
   digitalWrite(Y_ENABLE_PIN, LOW);
+  prepareMovement(1, (steps_mm_puxador * parameters.larguraBandeirinha));
+  prepareMovement(0, 2000);
   runSteppers();
-  delay(800);
+
+  while(getMovementStep(1) < 500){
+    if(!digitalRead(KILL_BTN_PIN)){
+      digitalWrite(MOSFET_C_PIN, LOW);
+      digitalWrite(MOSFET_A_PIN, LOW);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      return 2;
+    }
+    tryScreenUpdate();
+  }
+
+  //Serial.println("ligada esteira");
+  prepareMovement(0, (steps_mm_esteira * parameters.larguraBandeirinha));
+  runSteppers();
+
+  while(getMovementStep(0) < 1700){
+    if(!digitalRead(KILL_BTN_PIN)){
+      digitalWrite(MOSFET_C_PIN, LOW);
+      digitalWrite(MOSFET_A_PIN, LOW);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      return 2;
+    }
+  }
   digitalWrite(E0_ENABLE_PIN, LOW);
-  prepareMovement(2, -2000);
+  prepareMovement(2, -(parameters.uLbandeirinha * steps_uL_bomba + 1000));
   runSteppers();
   while(isRunning(2)){
-
+    if(!digitalRead(KILL_BTN_PIN)){
+      digitalWrite(MOSFET_C_PIN, LOW);
+      digitalWrite(MOSFET_A_PIN, LOW);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      return 2;
+    }
+    tryScreenUpdate();
   }
-  prepareMovement(2, 300);
-  runAndWait();
+  //Serial.println("retraindo bomba");
+  prepareMovement(2, 1000);
+  setInterval(2, 20);
+  runSteppers();
+  while(isRunning(0)){
+    if(!digitalRead(KILL_BTN_PIN)){
+      digitalWrite(MOSFET_C_PIN, LOW);
+      digitalWrite(MOSFET_A_PIN, LOW);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      digitalWrite(E0_ENABLE_PIN, HIGH);
+      digitalWrite(Y_ENABLE_PIN, HIGH);
+      digitalWrite(X_ENABLE_PIN, HIGH);
+      digitalWrite(Z_ENABLE_PIN, HIGH);
+      return 2;
+    }
+    tryScreenUpdate();
+  }
+
+  setInterval(0, parameters.velFeed);
+  prepareMovement(0, steps_mm_esteira * parameters.distanciaEntre);
+  runSteppers();
   digitalWrite(MOSFET_C_PIN, LOW);
   digitalWrite(MOSFET_A_PIN, LOW);
-
-  digitalWrite(E0_ENABLE_PIN, HIGH);
-  digitalWrite(Y_ENABLE_PIN, HIGH);
-  digitalWrite(X_ENABLE_PIN, HIGH);
   digitalWrite(Z_ENABLE_PIN, HIGH);
-  return 0;
+  //Serial.println("fim do ciclo");
+  return -1;
 }

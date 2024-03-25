@@ -29,3 +29,5 @@ void prepareMovement(int whichMotor, int steps);
 void runAndWait();
 void runSteppers();
 bool isRunning(int i);
+int getMovementStep(int i);
+void setInterval(int i, unsigned int minStepInterval);

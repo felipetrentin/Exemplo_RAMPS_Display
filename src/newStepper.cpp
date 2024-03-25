@@ -4,7 +4,6 @@
 
 struct stepperInfo {
   // externally defined parameters
-  float acceleration;
   volatile unsigned int minStepInterval;   // ie. max speed, smaller is faster
   void (*dirFunc)(int);
   void (*stepFunc)();
@@ -16,8 +15,6 @@ struct stepperInfo {
   volatile int dir;                        // current direction of movement, used to keep track of position
   volatile unsigned int totalSteps;        // number of steps requested for current movement
 
-  volatile unsigned short period; //inverse of frequency. how many times to run the timer to actually step. (period of 10 is 1/10 of the timer freq.)
-  volatile unsigned short count; //how many timers have been run. 
   // per iteration variables (potentially changed every interrupt)
   volatile unsigned int stepCount;
   
@@ -111,6 +108,8 @@ void setupSteppers() {
   TCCR5B |= ((1 << CS11) | (1 << CS10));    // 64 prescaler
 
   interrupts();
+
+
   TIMER3_INTERRUPTS_OFF
   TIMER4_INTERRUPTS_OFF
   TIMER5_INTERRUPTS_OFF
@@ -118,19 +117,17 @@ void setupSteppers() {
   //esteira
   steppers[0].dirFunc = xDir;
   steppers[0].stepFunc = xStep;
-  steppers[0].acceleration = 500;
-  steppers[0].minStepInterval = 500;
+  steppers[0].minStepInterval = 90;
 
   //puxador
   steppers[1].dirFunc = zDir;
   steppers[1].stepFunc = zStep;
-  steppers[1].acceleration = 500;
-  steppers[1].minStepInterval = 70;
+  steppers[1].minStepInterval = 60;
 
+  //bomba
   steppers[2].dirFunc = aDir;
   steppers[2].stepFunc = aStep;
-  steppers[2].acceleration = 500;
-  steppers[2].minStepInterval = 200;
+  steppers[2].minStepInterval = 70;
 }
 
 volatile byte remainingSteppersFlag = 0;
@@ -144,7 +141,8 @@ void prepareMovement(int whichMotor, int steps) {
 
   //reset stepper
   si.stepCount = 0;
-  si.period = si.minStepInterval;
+
+  //set as running
   remainingSteppersFlag |= (1 << whichMotor);
 
   switch (whichMotor)
@@ -174,7 +172,7 @@ ISR(TIMER3_COMPA_vect)
     if ( s.stepCount >= s.totalSteps ) {
       // done moving (reached steps)
       // set this stepper as not remaining
-      remainingSteppersFlag &= ~(1 << 0);
+      remainingSteppersFlag &= ~(1);
       TIMER3_INTERRUPTS_OFF
     }
   }
@@ -212,6 +210,7 @@ ISR(TIMER5_COMPA_vect){
 
 
 void runAndWait() {
+  runSteppers();
   //setNextInterruptInterval();
   while ( remainingSteppersFlag );
 }
@@ -222,6 +221,15 @@ void runSteppers() {
   TIMER5_INTERRUPTS_ON
 }
 
+int getMovementStep(int i){
+  volatile stepperInfo& s = steppers[i];
+  return s.stepCount;
+}
+
 bool isRunning(int i) {
   return remainingSteppersFlag & (1<<i);
+}
+
+void setInterval(int i, unsigned int minStepInterval){
+  steppers[i].minStepInterval = minStepInterval;
 }
