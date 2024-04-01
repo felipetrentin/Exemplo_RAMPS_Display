@@ -73,7 +73,7 @@ bool lastBackState;
 
 int index;
 
-unsigned int mmMade = 0;
+int cmMade = 0;
 
 bool running = false;
 
@@ -205,7 +205,6 @@ void loop()
         digitalWrite(BEEPER_PIN, HIGH);
         delay(10);
         digitalWrite(BEEPER_PIN, LOW);
-        delay(50);
       }
       estadoAtual = displayErro;
       errMsg = errorMsgs[returnState];
@@ -216,6 +215,13 @@ void loop()
     }
     startTime = initTime;
     endTime = millis();
+    if(cmMade >= parameters.distCorte){
+      runAndWait();
+      prepareMovement(0, steps_mm_esteira * parameters.distanciaEntre);
+      runAndWait();
+      cut();
+      cmMade = 0;
+    }
   }
   tryScreenUpdate();
 }
@@ -280,11 +286,13 @@ void updateScreen()
       case menuStatus:
         // desenho ambos menus
         if((endTime - startTime) > 0){
-          tela.drawStr(0, 30, (String(((float)60000) / (float)(endTime - startTime)) + " b/min").c_str());
+          tela.drawStr(0, 25, (String(((float)60000) / (float)(endTime - startTime)) + " b/min").c_str());
         }else{
           tela.drawStr(0, 25, "N/A b/min");
         }
         tela.drawFrame(0,0,128,14);
+        tela.drawStr(50, 35, String(cmMade).c_str());
+        tela.drawStr(0, 35, "dm feitos: ");
 
         if(running){
           //apenas se executando
@@ -382,7 +390,7 @@ void updateScreen()
         tela.drawStr(displayMargin - 5, 50, "cola: [uL]");
         tela.drawStr(displayMargin + 80, 50, String(parameters.uLbandeirinha).c_str());
 
-        tela.drawStr(displayMargin - 5, 60, "dist. corte [cm]:");
+        tela.drawStr(displayMargin - 5, 60, "dist. corte [dm]:");
         tela.drawStr(displayMargin + 80, 60, String(parameters.distCorte).c_str());
 
         if(!running){
@@ -611,7 +619,7 @@ int puxarPapel()
   runSteppers();
 
   while(getMovementStep(1) < 1000){
-    if(!digitalRead(KILL_BTN_PIN)){
+    if(!digitalRead(KILL_BTN_PIN) && estadoAtual == menuStatus){
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
       digitalWrite(Z_ENABLE_PIN, HIGH);
@@ -631,7 +639,7 @@ int puxarPapel()
   //aguarda o sensor de papel dentro
   while (digitalRead(X_MIN_PIN))
   {
-    if (!digitalRead(KILL_BTN_PIN))
+    if (!digitalRead(KILL_BTN_PIN) && estadoAtual == menuStatus)
     {
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
@@ -659,7 +667,7 @@ int puxarPapel()
   // ################## FIM PUXAR PAPEL ##################
 
   while(isRunning(0)){
-    if (!digitalRead(KILL_BTN_PIN))
+    if (!digitalRead(KILL_BTN_PIN) && estadoAtual == menuStatus)
     {
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
@@ -679,7 +687,7 @@ int puxarPapel()
   runSteppers();
 
   while(getMovementStep(1) < 500){
-    if(!digitalRead(KILL_BTN_PIN)){
+    if(!digitalRead(KILL_BTN_PIN) && estadoAtual == menuStatus){
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
       digitalWrite(Z_ENABLE_PIN, HIGH);
@@ -696,8 +704,8 @@ int puxarPapel()
   prepareMovement(0, (steps_mm_esteira * parameters.larguraBandeirinha));
   runSteppers();
 
-  while(getMovementStep(0) < 1700){
-    if(!digitalRead(KILL_BTN_PIN)){
+  while(getMovementStep(0) < 1000){
+    if(!digitalRead(KILL_BTN_PIN) && estadoAtual == menuStatus){
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
       digitalWrite(Z_ENABLE_PIN, HIGH);
@@ -712,7 +720,7 @@ int puxarPapel()
   prepareMovement(2, -(parameters.uLbandeirinha * steps_uL_bomba + 1000));
   runSteppers();
   while(isRunning(2)){
-    if(!digitalRead(KILL_BTN_PIN)){
+    if(!digitalRead(KILL_BTN_PIN) && estadoAtual == menuStatus){
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
       digitalWrite(Z_ENABLE_PIN, HIGH);
@@ -729,7 +737,7 @@ int puxarPapel()
   setInterval(2, 20);
   runSteppers();
   while(isRunning(0)){
-    if(!digitalRead(KILL_BTN_PIN)){
+    if(!digitalRead(KILL_BTN_PIN) && estadoAtual == menuStatus){
       digitalWrite(MOSFET_C_PIN, LOW);
       digitalWrite(MOSFET_A_PIN, LOW);
       digitalWrite(Z_ENABLE_PIN, HIGH);
@@ -748,5 +756,6 @@ int puxarPapel()
   digitalWrite(MOSFET_A_PIN, LOW);
   digitalWrite(Z_ENABLE_PIN, HIGH);
   Serial.println("fim do ciclo");
+  cmMade = cmMade + ((parameters.larguraBandeirinha + parameters.distanciaEntre)/100);
   return -1;
 }
